@@ -14,7 +14,6 @@ import org.twozerofoureightgame.io.ScreenshotUtility;
 import org.twozerofoureightgame.io.StateExporter;
 import org.twozerofoureightgame.io.StateImporter;
 import org.twozerofoureightgame.utility.AnimationManager;
-import org.twozerofoureightgame.utility.RandomUtility;
 import org.twozerofoureightgame.view.GameFrame;
 /**
  * The one place that decides anything. It owns the board, the score, the undo
@@ -36,11 +35,13 @@ public final class GameController implements AnimationManager.AnimationCompletio
     /** How long the artificial intelligence may think about one move. */
     public static final int AI_TIME_BUDGET_MILLISECONDS=100;
     /** The shortest pause between two autoplay moves. */
-    public static final int AUTOPLAY_MINIMUM_DELAY_MILLISECONDS=250;
+    public static final int AUTOPLAY_MINIMUM_DELAY_MILLISECONDS=100;
     /** The longest pause between two autoplay moves. */
     public static final int AUTOPLAY_MAXIMUM_DELAY_MILLISECONDS=1000;
     /** The exponent of the tile that wins the game. */
     public static final int WINNING_EXPONENT=11;
+    /** How long a step that finds the board busy waits before looking again. */
+    private static final int AUTOPLAY_RECHECK_MILLISECONDS=25;
     private final Board board=new Board();
     private final ExpectimaxAI expectimaxAI=new ExpectimaxAI();
     private final GameFrame gameFrame;
@@ -58,13 +59,15 @@ public final class GameController implements AnimationManager.AnimationCompletio
     private boolean overlayVisible=false;
     private boolean aiThinking=false;
     private Direction queuedDirection=null;
+    private Direction pendingAutoDirection=null;
     private SwingWorker<Direction,Void> activeAIWorker=null;
+    private int autoPlayDelayMilliseconds=250;
     /**
      * Builds the window and starts the first game.
      */
     public GameController(){
         RowMoveTable.prepare();
-        autoplayTimer=new javax.swing.Timer(AUTOPLAY_MINIMUM_DELAY_MILLISECONDS,new java.awt.event.ActionListener(){
+        autoplayTimer=new javax.swing.Timer(autoPlayDelayMilliseconds,new java.awt.event.ActionListener(){
             public void actionPerformed(java.awt.event.ActionEvent event){
                 runAutoPlayStep();
             }
@@ -168,6 +171,7 @@ public final class GameController implements AnimationManager.AnimationCompletio
         cancelActiveAIWorker();
         autoPlayEnabled=false;
         autoPlayResumeOnContinue=false;
+        updateAnimationScale();
         paused=false;
         won=false;
         lost=false;
@@ -232,6 +236,7 @@ public final class GameController implements AnimationManager.AnimationCompletio
             autoPlayEnabled=false;
             autoplayTimer.stop();
             cancelActiveAIWorker();
+            updateAnimationScale();
             refreshStatus();
             if(queuedDirection!=null&&!isBoardAnimating()&&!paused){
                 Direction direction=queuedDirection;
@@ -241,6 +246,8 @@ public final class GameController implements AnimationManager.AnimationCompletio
             return;
         }
         autoPlayEnabled=true;
+        pendingAutoDirection=null;
+        updateAnimationScale();
         refreshStatus();
         if(!isBoardAnimating()&&!paused){
             scheduleAutoPlayStep();
@@ -262,29 +269,104 @@ public final class GameController implements AnimationManager.AnimationCompletio
         }
         refreshStatus();
     }
+    /**
+     * Schedules the next autoplay move so that the slider value is the true gap
+     * between moves: the search always spends its full think budget after the
+     * timer fires, so the timer waits for the slider value minus that budget.
+     * Both delays are set because a restarted timer fires after its initial
+     * delay, not its delay.
+     */
     private void scheduleAutoPlayStep(){
-        int span=AUTOPLAY_MAXIMUM_DELAY_MILLISECONDS-AUTOPLAY_MINIMUM_DELAY_MILLISECONDS+1;
-        autoplayTimer.setDelay(AUTOPLAY_MINIMUM_DELAY_MILLISECONDS+RandomUtility.randomInt(span));
+        int gap=autoPlayDelayMilliseconds-AI_TIME_BUDGET_MILLISECONDS;
+        if(gap<0){
+            gap=0;
+        }
+        autoplayTimer.setInitialDelay(gap);
+        autoplayTimer.setDelay(gap);
         autoplayTimer.restart();
     }
     /**
-     * Throws away any answer the artificial intelligence is still working on, so
-     * that a decision made about an old board can never be played on a new one.
+     * Looks again shortly when a step fires while the board is still moving or
+     * the search is still running. This keeps the event thread from spinning on
+     * a zero delay timer while it waits.
+     */
+    private void recheckAutoPlaySoon(){
+        autoplayTimer.setInitialDelay(AUTOPLAY_RECHECK_MILLISECONDS);
+        autoplayTimer.setDelay(AUTOPLAY_RECHECK_MILLISECONDS);
+        autoplayTimer.restart();
+    }
+    /**
+     * Returns the pause between two autoplay moves, which the speed slider sets.
+     * @return the delay in milliseconds
+     */
+    public int getAutoPlayDelayMilliseconds(){
+        return autoPlayDelayMilliseconds;
+    }
+    /**
+     * Sets the pause between two autoplay moves. Values outside the slider range
+     * are clamped, so the slider can never break the pacing.
+     * @param delayMilliseconds the delay in milliseconds
+     */
+    public void setAutoPlayDelayMilliseconds(int delayMilliseconds){
+        if(delayMilliseconds<AUTOPLAY_MINIMUM_DELAY_MILLISECONDS){
+            delayMilliseconds=AUTOPLAY_MINIMUM_DELAY_MILLISECONDS;
+        }
+        if(delayMilliseconds>AUTOPLAY_MAXIMUM_DELAY_MILLISECONDS){
+            delayMilliseconds=AUTOPLAY_MAXIMUM_DELAY_MILLISECONDS;
+        }
+        autoPlayDelayMilliseconds=delayMilliseconds;
+        updateAnimationScale();
+    }
+    /**
+     * Matches the animation pace to the autoplay state: while autoplay drives,
+     * faster slider settings also shorten the slides so a 100 ms gap is truly
+     * reachable; otherwise every move plays at full length.
+     */
+    private void updateAnimationScale(){
+        double scale=1.0;
+        if(autoPlayEnabled){
+            scale=0.3+0.7*(autoPlayDelayMilliseconds-AUTOPLAY_MINIMUM_DELAY_MILLISECONDS)/(AUTOPLAY_MAXIMUM_DELAY_MILLISECONDS-AUTOPLAY_MINIMUM_DELAY_MILLISECONDS);
+        }
+        gameFrame.getBoardPanel().getAnimationManager().setAnimationScale(scale);
+    }
+    /**
+     * Throws away any answer the artificial intelligence is still working on and
+     * forgets any move already computed but not yet played, so that a decision
+     * made about an old board can never be played on a new one.
      */
     private void cancelActiveAIWorker(){
         if(activeAIWorker!=null&&!activeAIWorker.isDone()){
             activeAIWorker.cancel(true);
         }
         activeAIWorker=null;
+        pendingAutoDirection=null;
     }
     private void runAutoPlayStep(){
         if(!autoPlayEnabled||paused||overlayVisible||lost){
             return;
         }
         if(isBoardAnimating()||aiThinking){
-            scheduleAutoPlayStep();
+            recheckAutoPlaySoon();
             return;
         }
+        if(pendingAutoDirection!=null){
+            Direction direction=pendingAutoDirection;
+            pendingAutoDirection=null;
+            performMove(direction);
+            if(autoPlayEnabled&&!paused&&!overlayVisible&&!lost){
+                launchAutoPlayWorker();
+            }
+            return;
+        }
+        launchAutoPlayWorker();
+    }
+    /**
+     * Starts the search for the next autoplay move. The board model already holds
+     * the finished move while its animation is still playing, so calling this
+     * right after a move lets the search think during the animation instead of
+     * after it. Only one search may run at a time.
+     */
+    private void launchAutoPlayWorker(){
         aiThinking=true;
         refreshStatus();
         final byte[] cells=board.snapshotCells();
@@ -300,7 +382,10 @@ public final class GameController implements AnimationManager.AnimationCompletio
                 try{
                     Direction direction=get();
                     if(direction!=null&&autoPlayEnabled&&!paused&&!overlayVisible&&!lost){
-                        performMove(direction);
+                        pendingAutoDirection=direction;
+                        if(!isBoardAnimating()){
+                            scheduleAutoPlayStep();
+                        }
                     }
                 }catch(Exception exception){
                     refreshStatus();
@@ -348,6 +433,7 @@ public final class GameController implements AnimationManager.AnimationCompletio
         autoplayTimer.stop();
         autoPlayResumeOnContinue=autoPlayEnabled;
         autoPlayEnabled=false;
+        pendingAutoDirection=null;
         gameFrame.getOverlayPanel().showMessage(message,allowContinue);
         gameFrame.showGlassPane();
         refreshStatus();
@@ -402,6 +488,7 @@ public final class GameController implements AnimationManager.AnimationCompletio
         cancelActiveAIWorker();
         autoPlayEnabled=false;
         paused=false;
+        updateAnimationScale();
         board.restoreFrom(state.cells);
         score=state.score;
         moveCount=state.moveCount;
