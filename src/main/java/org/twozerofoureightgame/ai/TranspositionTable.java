@@ -24,7 +24,7 @@ public final class TranspositionTable{
     /** The flag bit that marks a value computed at a chance node. */
     public static final int FLAG_CHANCE_NODE=0x02;
     /** How many slots the table holds. */
-    public static final int CAPACITY=1<<19;
+    public static final int CAPACITY=1<<17;
     private static final int INDEX_MASK=CAPACITY-1;
     private static final int OCCUPIED_BIT=0x80;
     private static final int DEPTH_SHIFT=1;
@@ -35,7 +35,7 @@ public final class TranspositionTable{
     private final int[] values=new int[CAPACITY];
     private final byte[] meta=new byte[CAPACITY];
     /**
-     * Creates an empty table. The three arrays together occupy about six and a
+     * Creates an empty table. The three arrays together occupy about one and a
      * half megabytes.
      */
     public TranspositionTable(){
