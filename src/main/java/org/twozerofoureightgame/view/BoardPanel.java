@@ -11,13 +11,13 @@ import org.twozerofoureightgame.utility.AnimationManager;
 /**
  * Paints the board and turns a move into animation. The panel owns one tile view
  * per cell, a pool of spare tile views to reuse, and the animation manager that
- * drives every slide, merge swell, spawn fade, and score float from a single
+ * drives every slide, merge settle, spawn fade, and score float from a single
  * timer.
  * A move is animated by following the transitions the board recorded. Each tile
  * that travels is lifted out of the grid, added to the flying set, and handed to
  * the manager with the centres it should travel between. Two tiles that merge
  * both fly to the same cell: the first one waits for its partner, and when the
- * second arrives the manager is told to swell the first and recycle the second.
+ * second arrives the manager is told to settle the first and recycle the second.
  * While the board is moving, input is refused, so the grid and the tiles always
  * describe the same game.
  */
