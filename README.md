@@ -45,7 +45,8 @@ Three modes of play share one live board, and the player may switch between them
 3. **Auto Play from mid game.** The human plays some moves, then hands the board over. Because
    every decision is computed from the current board rather than from a remembered plan, the
    handoff is instantaneous and always correct. Auto Play may be switched off at any time, and
-   the human resumes on the same board.
+   the human resumes on the same board. The AI speed slider sets the pause between autoplay
+   moves, 100 ms at the fast end and 1000 ms at the slow end.
 
 | Input | Effect |
 |---|---|
@@ -56,6 +57,7 @@ Three modes of play share one live board, and the player may switch between them
 | **Undo** | Step back exactly one move, using a single snapshot |
 | **Hint** | Ask the artificial intelligence for its move, without playing it |
 | **Auto Play** | Give the board to the artificial intelligence, or take it back |
+| **AI speed** | The pause between autoplay moves, 100 ms at the fast end to 1000 ms at the slow end |
 | **Pause** | Refuse new moves and stop autoplay, without interrupting an animation |
 | **Export** / **Import** | Save and load a plain text board, ending in `.txt` |
 | **Screenshot** | Write the whole window to a timestamped PNG file |
@@ -295,7 +297,7 @@ the 32 tile, which pins this behavior.
 ## The Transposition Table
 
 Visited boards are cached in three parallel primitive arrays, not a hash map: `long[]` keys,
-`int[]` values, and `byte[]` metadata, 524,288 slots, about 6.5 MB, with zero per entry object
+`int[]` values, and `byte[]` metadata, 131,072 slots, about 1.6 MB, with zero per entry object
 overhead. A lookup costs one multiply, one shift, and three array reads, with no pointer
 chasing. Each slot stores the full sixty four bit board as its key, so collisions between
 different boards are detected by comparing keys rather than by trusting the hash. The metadata
@@ -344,8 +346,8 @@ that a player value is never handed to a chance node.
 | Steady state processor use | Near zero | The animation timer stops when idle |
 | Per frame allocation | Zero | Pooled animations, cached paint objects |
 
-Steady state memory is roughly 10 MB: 650 KB of row tables, 6.5 MB of transposition cache, and
-the interface. Painting creates no objects. Colors, fonts, tile text, composite rules, and the
+Steady state memory is roughly 5 MB: 650 KB of row tables, about 1.6 MB of transposition cache,
+and the interface. Painting creates no objects. Colors, fonts, tile text, composite rules, and the
 rendering hints are built once in `Theme`, and the tile values are precomputed rather than
 formatted on the fly. The cell size is worked out from the panel size on every layout pass,
 between 48 and 100 pixels, so the board is centered in whatever room the window gives it and
@@ -515,6 +517,19 @@ high density screens alike.
 * **Readability.** Names are spelled out in full (`cellExponents`, `emptyCellCount`,
   `timeBudgetMilliseconds`), every class and method carries a JavaDoc comment, and there are no
   lambdas or streams on any path the search or the animations touch.
+* **The autoplay timer sets both delays.** A restarted Swing timer fires after its initial delay,
+  not its delay, and `setDelay` leaves the initial delay untouched. The controller therefore sets
+  both, otherwise every pace, including the speed slider, would silently run at the 250 ms the
+  timer was built with. The slider value minus the 100 ms think budget is the true pause between
+  moves. While autoplay drives, the next search already runs during the current move's animation,
+  and faster slider settings also shorten the slides, so the fastest setting paces at about four
+  moves a second; the slowest setting and manual play always use the full lengths.
+* **Slides run at the display rate.** The animation timer ticks at the screen refresh rate instead
+  of a fixed sixteen milliseconds, and slides ease with a quartic curve, so motion stays smooth up
+  to whatever the display allows while covering the same distance in the same time. A merge keeps
+  its settle timing but no longer swells the tile, so merges land without a flash.
+* **The transposition table is 131,072 slots.** The cache stores exact values, so a smaller table
+  only risks recomputing a position, never misjudging it. The strength test still passes unchanged.
 
 ## License
 
