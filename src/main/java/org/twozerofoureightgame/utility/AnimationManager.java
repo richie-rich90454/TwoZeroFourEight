@@ -2,20 +2,20 @@ package org.twozerofoureightgame.utility;
 import org.twozerofoureightgame.view.BoardPanel;
 import org.twozerofoureightgame.view.TileView;
 /**
- * Drives every animation in the game from one timer that ticks sixteen
- * milliseconds at a time. The manager owns a fixed pool of animation objects
+ * Drives every animation in the game from one timer that ticks at the display
+ * refresh rate. The manager owns a fixed pool of animation objects
  * and a fixed array of the tiles currently in flight, so a move starts four
  * animations without allocating a single object. The timer only runs while
  * something is moving and stops itself the moment the last animation finishes,
  * which keeps the processor idle when the player is thinking.
- * The four animation kinds are a slide, a merge swell, a spawn fade, and a
+ * The four animation kinds are a slide, a merge settle, a spawn fade, and a
  * score float. They are told apart by an identifier, and the identifier selects
  * one of four concrete update methods, so no callback object is ever created.
  */
 public final class AnimationManager{
     /** Identifies a tile sliding from one cell to another. */
     public static final int SLIDE_IDENTIFIER=1;
-    /** Identifies the swell that follows a merge. */
+    /** Identifies the settle that follows a merge. */
     public static final int MERGE_POP_IDENTIFIER=2;
     /** Identifies a newly spawned tile fading in. */
     public static final int SPAWN_FADE_IDENTIFIER=3;
@@ -23,7 +23,7 @@ public final class AnimationManager{
     public static final int SCORE_FLOAT_IDENTIFIER=4;
     /** How long a slide takes. */
     public static final long SLIDE_DURATION_NANOS=150000000L;
-    /** How long a merge swell takes. */
+    /** How long a merge settle takes. */
     public static final long MERGE_POP_DURATION_NANOS=150000000L;
     /** How long a spawn fade takes. */
     public static final long SPAWN_FADE_DURATION_NANOS=140000000L;
@@ -32,8 +32,8 @@ public final class AnimationManager{
     /** The largest number of tiles that can be in flight at once. */
     public static final int MAXIMUM_MOVING_VIEWS=16;
     private static final int ANIMATION_POOL_SIZE=64;
-    private static final int TICK_INTERVAL_MILLISECONDS=16;
-    private static final float MERGE_POP_SCALE=1.26f;
+    private static final int TICK_INTERVAL_MILLISECONDS=displayTickInterval();
+    private static final double MINIMUM_ANIMATION_SCALE=0.25;
     private static final float SPAWN_START_SCALE=0.72f;
     private static final float SCORE_FLOAT_RISE_PIXELS=44f;
     private final Animation[] animationPool=new Animation[ANIMATION_POOL_SIZE];
@@ -42,7 +42,35 @@ public final class AnimationManager{
     private final TileView[][] tileViews;
     private final javax.swing.Timer timer;
     private int movingViewCount=0;
+    private double animationScale=1.0;
     private AnimationCompletionListener completionListener;
+    /**
+     * Picks the timer step from the display refresh rate so motion stays smooth
+     * up to whatever the screen allows, while progress itself stays clock based
+     * and therefore identical on every display.
+     * @return the tick interval in milliseconds, from four to sixteen
+     */
+    private static int displayTickInterval(){
+        try{
+            if(java.awt.GraphicsEnvironment.isHeadless()){
+                return 8;
+            }
+            int refreshRate=java.awt.GraphicsEnvironment.getLocalGraphicsEnvironment().getDefaultScreenDevice().getDisplayMode().getRefreshRate();
+            if(refreshRate<=0){
+                return 8;
+            }
+            int interval=1000/refreshRate;
+            if(interval<4){
+                return 4;
+            }
+            if(interval>16){
+                return 16;
+            }
+            return interval;
+        }catch(Exception exception){
+            return 8;
+        }
+    }
     /**
      * Implemented by whoever needs to know that the board has stopped moving,
      * which in this game is the controller driving autoplay.
@@ -71,6 +99,22 @@ public final class AnimationManager{
             }
         });
         timer.setRepeats(true);
+    }
+    /**
+     * Shortens every tile animation to a fraction of its full length, so fast
+     * autoplay paces stay fluid without skipping any motion. Animations already
+     * running keep the durations they began with. The score float always plays
+     * in full because it never blocks the next move.
+     * @param scale the fraction of full length, from one quarter to one
+     */
+    public void setAnimationScale(double scale){
+        if(scale<MINIMUM_ANIMATION_SCALE){
+            scale=MINIMUM_ANIMATION_SCALE;
+        }
+        if(scale>1.0){
+            scale=1.0;
+        }
+        animationScale=scale;
     }
     /**
      * Registers the object that wants to hear about the board coming to rest.
@@ -142,11 +186,11 @@ public final class AnimationManager{
         animation.toPixelY=toPixelY;
         animation.settlesOnCompletion=settlesOnCompletion;
         animation.startDelayNanos=0L;
-        animation.durationNanos=SLIDE_DURATION_NANOS;
+        animation.durationNanos=(long)(SLIDE_DURATION_NANOS*animationScale);
         start(animation);
     }
     /**
-     * Starts the swell that plays after two tiles have slid together. The tile
+     * Starts the settle that plays after two tiles have slid together. The tile
      * that survives keeps its place in the grid; the tile that was consumed goes
      * back into the pool of reusable views.
      * @param survivorView the tile that remains
@@ -167,8 +211,8 @@ public final class AnimationManager{
         animation.targetColumn=column;
         animation.newExponent=newExponent;
         animation.settlesOnCompletion=true;
-        animation.startDelayNanos=SLIDE_DURATION_NANOS;
-        animation.durationNanos=MERGE_POP_DURATION_NANOS;
+        animation.startDelayNanos=(long)(SLIDE_DURATION_NANOS*animationScale);
+        animation.durationNanos=(long)(MERGE_POP_DURATION_NANOS*animationScale);
         start(animation);
     }
     /**
@@ -188,8 +232,8 @@ public final class AnimationManager{
         animation.targetRow=row;
         animation.targetColumn=column;
         animation.settlesOnCompletion=true;
-        animation.startDelayNanos=SLIDE_DURATION_NANOS;
-        animation.durationNanos=SPAWN_FADE_DURATION_NANOS;
+        animation.startDelayNanos=(long)(SLIDE_DURATION_NANOS*animationScale);
+        animation.durationNanos=(long)(SPAWN_FADE_DURATION_NANOS*animationScale);
         start(animation);
     }
     /**
@@ -297,7 +341,7 @@ public final class AnimationManager{
         if(view==null){
             return;
         }
-        float eased=Easing.easeOutCubic(progress);
+        float eased=Easing.easeOutQuart(progress);
         view.pixelCenterX=animation.fromPixelX+(animation.toPixelX-animation.fromPixelX)*eased;
         view.pixelCenterY=animation.fromPixelY+(animation.toPixelY-animation.fromPixelY)*eased;
     }
@@ -307,14 +351,6 @@ public final class AnimationManager{
             return;
         }
         view.exponent=animation.newExponent;
-        float rise;
-        if(progress<0.5f){
-            rise=Easing.easeOutBack(progress*2f);
-        }else{
-            rise=1f;
-        }
-        float settle=progress<0.5f?0f:Easing.easeInOutQuad((progress-0.5f)*2f);
-        view.scaleFactor=1f+(MERGE_POP_SCALE-1f)*(rise-settle);
     }
     private void applySpawnFade(Animation animation,float progress){
         TileView view=animation.view;
