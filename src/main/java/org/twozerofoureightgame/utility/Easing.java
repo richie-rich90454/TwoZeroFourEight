@@ -31,6 +31,16 @@ public final class Easing{
         return 1f-remaining*remaining*remaining;
     }
     /**
+     * Starts even more quickly than a cubic and lands even more gently, which is
+     * the natural feel of a tile sliding into place at high frame rates.
+     * @param progress the normalised progress between zero and one
+     * @return the eased progress
+     */
+    public static float easeOutQuart(float progress){
+        float remaining=1f-progress;
+        return 1f-remaining*remaining*remaining*remaining;
+    }
+    /**
      * Accelerates into the middle of the movement and slows out of it, which
      * suits a tile that swells and settles again.
      * @param progress the normalised progress between zero and one
